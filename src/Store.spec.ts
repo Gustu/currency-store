@@ -1,5 +1,6 @@
 import { assert, assertEquals } from "https://deno.land/std/testing/asserts.ts";
-import { StoreFactory, Transaction } from "./Store.ts";
+import { StoreFactory } from "./Store.ts";
+import { Transaction } from "./Transaction.ts";
 
 const getStoreWithTransactions = async (transactions: Transaction[]) => {
   const storage = StoreFactory();

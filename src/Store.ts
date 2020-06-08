@@ -1,14 +1,16 @@
-interface SellTransactionSummary {
-  tx: string;
-  currency: string;
-  result: number;
-}
-
-interface CurrencyStorageSummary {
-  currency: string;
-  amount: number;
-  equivalent: number;
-}
+import {
+  BuyTransaction,
+  SellTransaction,
+  SellTransactionSummary,
+  StoreTransaction,
+  Transaction,
+} from "./Transaction.ts";
+import {
+  calculateRemainingCurrency,
+  calculateSellResults,
+  CurrencyStorageSummary,
+  sumUpRemaining,
+} from "./StoreSummary.ts";
 
 interface StoreSummary {
   transactions: SellTransactionSummary[];
@@ -16,30 +18,7 @@ interface StoreSummary {
   pending: SellTransaction[];
 }
 
-type PartialSell = { tx: string; from: string; amount: number; price: number };
-
-type StoreTransaction = BuyTransaction & {
-  remaining: number;
-  sellTransactions: PartialSell[];
-};
-
-interface BuyTransaction {
-  tx: string;
-  we_buy: number;
-  currency: string;
-  price: number;
-}
-
-interface SellTransaction {
-  tx: string;
-  we_sell: number;
-  currency: string;
-  price: number;
-}
-
-export type Transaction = BuyTransaction | SellTransaction;
-
-interface Store {
+export interface Store {
   getSummary(): Promise<StoreSummary>;
 
   handleNewBuyTransaction(transaction: BuyTransaction): Promise<void>;
@@ -54,10 +33,12 @@ export const StoreFactory = (): Store => {
   let cursor = 0;
 
   const getSummary = async (): Promise<StoreSummary> => {
-    const transactions = getAllSells();
-    const sum = sumUpRemaining();
-    const storage = sum.currency === "" ? [] : [sum];
-    return { transactions, storage, pending };
+    const sellResults = calculateSellResults(storeTransactions, transactions);
+    const remainingCurrencies = sumUpRemaining(storeTransactions);
+    const storage = remainingCurrencies.currency === ""
+      ? []
+      : [remainingCurrencies];
+    return { transactions: sellResults, storage, pending };
   };
 
   const addToPending = (transaction: SellTransaction) => {
@@ -70,61 +51,12 @@ export const StoreFactory = (): Store => {
     );
   };
 
-  const findSellTransaction = (tx: string): SellTransaction | undefined => {
-    const t = transactions.get(tx);
-    return t && "we_sell" in t ? t : undefined;
-  };
-
-  const calculateRemainingCurrency = () => {
-    return storeTransactions.reduce((acc, t) => acc + t.remaining, 0);
-  };
-
-  const getAllSells = (): SellTransactionSummary[] => {
-    const buySummary: Map<string, { tx: string; paid: number }> =
-      storeTransactions
-        .flatMap((t) => t.sellTransactions)
-        .reduce((acc, t) => {
-          const transactionSummary = acc.get(t.tx);
-          if (transactionSummary) {
-            acc.set(
-              t.tx,
-              { tx: t.tx, paid: transactionSummary.paid + t.amount * t.price },
-            );
-          } else {
-            acc.set(t.tx, { tx: t.tx, paid: t.amount * t.price });
-          }
-          return acc;
-        }, new Map<string, { tx: string; paid: number }>());
-
-    return Array.from(buySummary)
-      .map(([key, value]) => {
-        const t = findSellTransaction(key);
-        if (!t) {
-          throw new Error("Missing transaction");
-        }
-        return {
-          tx: key,
-          currency: t.currency,
-          result: t.price - value.paid,
-        };
-      });
-  };
-
-  const sumUpRemaining = (): CurrencyStorageSummary => {
-    return storeTransactions.reduce((acc, t) => {
-      return ({
-        currency: t.currency, // TODO: Multi-currency store
-        amount: acc.amount + t.remaining,
-        equivalent: acc.equivalent + t.remaining * (t.price / t.we_buy),
-      });
-    }, { amount: 0, currency: "", equivalent: 0 }); // TODO: Multi-currency store
-  };
-
   const tryToClearPending = () => {
-    const remainingAmount = calculateRemainingCurrency();
+    const remainingAmount = calculateRemainingCurrency(storeTransactions);
     for (let i = 0; i < pending.length; i++) {
-      let p = pending[i];
-      if (remainingAmount < p.we_sell) {
+      const p = pending[i];
+      const isEnoughForSellTransaction = remainingAmount < p.we_sell;
+      if (isEnoughForSellTransaction) {
         continue;
       }
       pending.splice(i, 1);
@@ -137,7 +69,7 @@ export const StoreFactory = (): Store => {
   };
 
   const handleSellTransaction = (transaction: SellTransaction): boolean => {
-    const remainingAmount = calculateRemainingCurrency();
+    const remainingAmount = calculateRemainingCurrency(storeTransactions);
     const isNotEnoughCurrencyForSell = transaction.we_sell > remainingAmount;
 
     if (isNotEnoughCurrencyForSell) {
@@ -148,8 +80,10 @@ export const StoreFactory = (): Store => {
     let sellRemaining = transaction.we_sell;
     while (sellRemaining > 0 && storeTransactions.length > cursor) {
       const { sellTransactions } = storeTransactions[cursor];
+      const isDividedTransaction =
+        storeTransactions[cursor].remaining >= sellRemaining;
 
-      if (storeTransactions[cursor].remaining >= sellRemaining) {
+      if (isDividedTransaction) {
         sellTransactions.push(
           {
             tx: transaction.tx,
