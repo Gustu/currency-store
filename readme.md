@@ -13,4 +13,4 @@ Deno store which allows to exchange currencies.
 
 ## Usage 
 
-- Run tests: `deno test src/Storage.spec.ts`
+- Run tests: `deno test src/Store.spec.ts`
